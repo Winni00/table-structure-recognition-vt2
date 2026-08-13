@@ -24,6 +24,13 @@ restricted ZHAW OneDrive or SharePoint location. Access should be granted by
 the data owner. Do not place a private share URL, session token, or personal
 OneDrive path in this repository.
 
+At the time of the project, the source material was supplied through a
+supervisor-managed ZHAW SharePoint/OneDrive hierarchy under
+`Student_Projects / trinhwin / Data`. This is a provenance note, not a stable
+handover address. A successor must be granted access by the institutional data
+owner to the final shared project archive. See [`HANDOVER.md`](HANDOVER.md) for
+the required contents and access procedure.
+
 A versioned archive can use this layout:
 
 ```text
@@ -114,3 +121,5 @@ find /path/to/release -type f -print0 \
 Record at least the release date, owner, number of papers, number of tables,
 split method, accepted pseudo-label counts, and checksum-file location.
 
+The template [`external-artifacts-manifest.example.tsv`](external-artifacts-manifest.example.tsv)
+can be copied into the external archive and completed during handover.

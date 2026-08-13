@@ -8,4 +8,5 @@ settings must not be compared as if they came from the same evaluator.
 
 Final runs should be archived in restricted project storage with their
 configuration, checkpoint checksum, data manifest, and aggregate metrics, as
-described in [`docs/DATA.md`](../docs/DATA.md).
+described in [`docs/DATA.md`](../docs/DATA.md). The final handover checklist is
+in [`docs/HANDOVER.md`](../docs/HANDOVER.md).

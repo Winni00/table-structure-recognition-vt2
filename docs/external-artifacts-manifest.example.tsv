@@ -1,0 +1,9 @@
+artifact_id	category	expected_version_or_count	archive_relative_path	checksum_manifest	status	notes
+antibiotic_original	dataset	696 crops	restricted/antibiotic_paper_collection/original	manifests/antibiotic_original.tsv	pending	Development and evaluation collection
+antibiotic_updated	dataset	695 evaluable crops	restricted/antibiotic_paper_collection/updated	manifests/antibiotic_updated.tsv	pending	Include crop-to-page metadata and orientation labels
+preliminary_finetuning	dataset	3522 train; 417 validation	restricted/preliminary_finetuning	manifests/preliminary_finetuning.tsv	pending	Include candidate and accepted split manifests
+synchronised_finetuning	dataset	4233 train; 505 validation	restricted/synchronised_finetuning	manifests/synchronised_finetuning.tsv	pending	Include candidate and accepted split manifests
+fintabnet_checkpoints	checkpoints	FTN1K; FTN10K; FTN50K; FTN100K	checkpoints/fintabnet	manifests/fintabnet_checkpoints.tsv	pending	Include mixed FTN--PTN 10K checkpoint
+preliminary_checkpoints	checkpoints	target-only; 75:25; 50:50	checkpoints/target_domain/preliminary	manifests/preliminary_checkpoints.tsv	pending	Record training configuration and data manifest
+synchronised_checkpoints	checkpoints	target-only; 75:25; 50:50	checkpoints/target_domain/synchronised	manifests/synchronised_checkpoints.tsv	pending	Record training configuration and data manifest
+final_results	results	report result bundles	final_results	manifests/final_results.tsv	pending	Include predictions, aggregate metrics, and evaluator settings

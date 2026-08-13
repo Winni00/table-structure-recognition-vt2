@@ -39,6 +39,7 @@ conditions behind every result family.
 | `docs/EXPERIMENTS.md` | Mapping from experiment families to scripts and outputs |
 | `docs/REPRODUCTION.md` | Ordered reproduction procedures |
 | `docs/DATA.md` | Dataset identities, access policy, and expected layout |
+| `docs/HANDOVER.md` | Required external archive, access procedure, and handover checklist |
 | `docs/THIRD_PARTY.md` | Exact third-party revisions and TFLOP patch instructions |
 | `environment/README.md` | Recorded software environments |
 | `patches/` | Project-specific patch applied to the public TFLOP checkout |
@@ -60,7 +61,9 @@ presentations, and feedback files are intentionally excluded from Git.
   use a public GitHub release or Git LFS for these files.
 
 The exact dataset counts, identities, and suggested archive structure are in
-[`docs/DATA.md`](docs/DATA.md). A manifest can be generated with:
+[`docs/DATA.md`](docs/DATA.md). The complete handover procedure, including the
+required checkpoints and result bundles, is in
+[`docs/HANDOVER.md`](docs/HANDOVER.md). A manifest can be generated with:
 
 ```bash
 python3 tools/build_data_manifest.py /path/to/dataset \
