@@ -1,0 +1,61 @@
+# Python and local tooling
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.venv/
+.venv-*/
+.env
+.env.*
+config/paths.local.sh
+.secrets/
+.vscode/
+.idea/
+.DS_Store
+.codex/
+
+# Large or restricted project data. Keep only the documentation stubs.
+data/**
+!data/README.md
+models/**
+!models/README.md
+results/**
+!results/README.md
+!results/summary_metrics.csv
+logs/
+shared_target_domain/
+
+# Third-party checkouts and reproduction sandboxes
+repo/
+repro/
+
+# Model checkpoints and binary experiment artefacts
+*.ckpt
+*.pt
+*.pth
+*.onnx
+*.safetensors
+*.pkl
+*.pickle
+*.npy
+*.npz
+
+# Archives, reports, feedback files, and presentations
+*.zip
+*.7z
+*.tar
+*.tar.gz
+*.tgz
+*.pdf
+*.ppt
+*.pptx
+*.key
+
+# Cluster and application output
+slurm-*.out
+slurm-*.err
+*.log
+notes.txt

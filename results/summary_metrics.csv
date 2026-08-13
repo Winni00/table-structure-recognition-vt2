@@ -1,0 +1,7 @@
+experiment,evaluation_set,samples,checkpoint_or_condition,teds_s,teds,reference_processing,notes
+TFLOP reproduction,PubTabNet test,9064,Official OCR bundle,0.9835,0.9662,Official TFLOP evaluator,Published values were 0.9838 and 0.9666
+FinTabNet fine-tuning,FinTabNet validation,10622,Public TFLOP,0.7187,0.6537,Official TFLOP evaluator,Reduced validation set
+FinTabNet fine-tuning,FinTabNet validation,10622,FTN100K stage (160000 cumulative updates),0.9374,0.9293,Official TFLOP evaluator,Sequential FTN10K to FTN50K to FTN100K training
+FinTabNet sensitivity analysis,FinTabNet validation,10622,FTN100K stage (160000 cumulative updates),0.9911,0.9829,FinTabNet-specific canonicalisation,Not directly comparable with unchanged official evaluation
+Target-domain pipeline,Antibiotic Paper Collection,695,Updated crops plus automatic orientation,0.9225,0.8689,Normalised publisher references,Public TFLOP checkpoint with PSENet and MASTER
+Target-domain fine-tuning,Antibiotic Paper Collection,695,Target 75 percent plus PubTabNet 25 percent,0.9318,0.8760,Canonicalised publisher references,Synchronised Fine-Tuning Dataset experiment

@@ -1,0 +1,20 @@
+name: Validate research artifact
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Check Python syntax
+        run: python -m compileall -q .
+      - name: Check shell syntax
+        run: find . -type f -name '*.sh' -print0 | xargs -0 -n1 bash -n
+      - name: Check publication boundaries
+        run: python tools/check_repository.py

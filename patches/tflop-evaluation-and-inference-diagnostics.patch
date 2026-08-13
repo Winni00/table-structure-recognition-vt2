@@ -1,0 +1,635 @@
+From 584f6702591630b9180d0cff1ac447f11dc34343 Mon Sep 17 00:00:00 2001
+From: winni00 <winni00@users.noreply.github.com>
+Date: Sun, 17 May 2026 22:04:45 +0200
+Subject: [PATCH] Add TFLOP evaluation and inference diagnostics
+
+---
+ evaluate_ted.py                      | 27 +++++---
+ test.py                              | 58 +++++++++++++++--
+ tflop/datamodule/datasets/tflop.py   | 45 ++++++++++++-
+ tflop/evaluator.py                   | 29 +++++++++
+ tflop/model/decoder/mbart_decoder.py | 56 ++++++++++++----
+ tflop/model/decoder/utils.py         | 95 +++++++++++++++++++++++++++-
+ tflop/model/model/TFLOP.py           | 44 ++++++++++---
+ tflop/model/model/TFLOP_Config.py    |  5 +-
+ 8 files changed, 323 insertions(+), 36 deletions(-)
+
+diff --git a/evaluate_ted.py b/evaluate_ted.py
+index 381bcff..347813f 100755
+--- a/evaluate_ted.py
++++ b/evaluate_ted.py
+@@ -110,11 +110,11 @@ def strip_html_contents(html_string):
+ 
+ 
+ def evaluate_distance(data_tuple):
+-    """ Evaluation of TEDs and S-TEDs scores"""
++    """Evaluation of TEDS and TEDS-S scores using PubTabNet metric semantics."""
+     ted_evaluator_structure_only = TEDS(structure_only=True, n_jobs=1)
+-    ted_evaluator = TEDS(structure_only=False, n_jobs=1, ignore_nodes=["b"])
++    ted_evaluator = TEDS(structure_only=False, n_jobs=1)
+ 
+-    file_name, pred_string, gold_string = data_tuple
++    file_name, pred_string, gold_string, strip_cell_contents = data_tuple
+ 
+     # edit-distance
+     edit_distance = distance(pred_string, gold_string) / max(
+@@ -138,9 +138,9 @@ def evaluate_distance(data_tuple):
+     ):
+         refined_gold = "<html><body><table>" + refined_gold + "</table></body></html>"
+ 
+-    # strip content in table data
+-    refined_pred = strip_html_contents(refined_pred)
+-    refined_gold = strip_html_contents(refined_gold)
++    if strip_cell_contents:
++        refined_pred = strip_html_contents(refined_pred)
++        refined_gold = strip_html_contents(refined_gold)
+ 
+     # tree-edit-distance (structure only)
+     try:
+@@ -172,6 +172,14 @@ if __name__ == "__main__":
+     parser = argparse.ArgumentParser()
+     parser.add_argument("--model_inference_pathdir", type=str, required=True)
+     parser.add_argument("--output_savepath", type=str, required=True)
++    parser.add_argument(
++        "--legacy-strip-cell-contents",
++        action="store_true",
++        help=(
++            "Strip leading/trailing whitespace inside table cells before scoring. "
++            "The default keeps PubTabNet paper metric behavior."
++        ),
++    )
+     args = parser.parse_args()
+ 
+     if "full_model_inference.json" in os.listdir(args.model_inference_pathdir):
+@@ -194,7 +202,8 @@ if __name__ == "__main__":
+         (
+             k,
+             v["pred_string"],
+-            v["answer_string"]
++            v["answer_string"],
++            args.legacy_strip_cell_contents,
+         )
+         for k, v in model_inference.items()
+     ]
+@@ -225,7 +234,9 @@ if __name__ == "__main__":
+         result_collection.extend(outputs)
+ 
+     teds_score = sum([x[-1] for x in result_collection]) / len(result_collection)
+-    print(f"TEDs score: {teds_score}")
++    teds_s_score = sum([x[-2] for x in result_collection]) / len(result_collection)
++    print(f"TEDS-S score: {teds_s_score}")
++    print(f"TEDS score: {teds_score}")
+     
+     # /ted_score_output.json
+     with open(
+diff --git a/test.py b/test.py
+index 1d88b6c..98f994d 100755
+--- a/test.py
++++ b/test.py
+@@ -76,6 +76,8 @@ def evaluate_model(
+             image_tensors = image_tensors.half()
+         elif model_dtype == "bfloat16":
+             image_tensors = image_tensors.bfloat16()
++        elif model_dtype == "float32":
++            image_tensors = image_tensors.float()
+         else:
+             raise ValueError(f"Invalid torch dtype: {model_dtype}")
+ 
+@@ -168,7 +170,43 @@ def evaluate_model(
+ def custom_load_state_dict(model, state_dict_map):
+     assert len(state_dict_map) == 2
+     if state_dict_map["key"] == "encoder":
+-        model.encoder.load_state_dict(state_dict_map["value"])
++        # Some TFLOP checkpoints are aligned to Swin encoders with downsample
++        # layers starting at index 0, while others start at index 1. Detect the
++        # active layout to avoid size-mismatch when loading weights.
++        has_layer0_downsample = any(
++            name.startswith("model.layers.0.downsample")
++            for name, _ in model.encoder.named_parameters()
++        )
++
++        encoder_state_dict = {}
++        for key, value in state_dict_map["value"].items():
++            if key.endswith("attn.relative_position_index") or key.endswith("attn_mask"):
++                continue
++
++            new_key = key
++            if not has_layer0_downsample:
++                if key.startswith("model.layers.0.downsample."):
++                    new_key = key.replace(
++                        "model.layers.0.downsample.",
++                        "model.layers.1.downsample.",
++                        1,
++                    )
++                elif key.startswith("model.layers.1.downsample."):
++                    new_key = key.replace(
++                        "model.layers.1.downsample.",
++                        "model.layers.2.downsample.",
++                        1,
++                    )
++                elif key.startswith("model.layers.2.downsample."):
++                    new_key = key.replace(
++                        "model.layers.2.downsample.",
++                        "model.layers.3.downsample.",
++                        1,
++                    )
++
++            encoder_state_dict[new_key] = value
++
++        model.encoder.load_state_dict(encoder_state_dict, strict=False)
+     elif state_dict_map["key"] == "decoder":
+         model.decoder.load_state_dict(state_dict_map["value"])
+     else:
+@@ -249,11 +287,16 @@ if __name__ == "__main__":
+     if model_config.torch_dtype == "float16":
+         model.half()
+     elif model_config.torch_dtype == "bfloat16":
+-        model.bfloat16()
++        if torch.cuda.is_available():
++            model.bfloat16()
++        else:
++            # CPU bfloat16 is not reliably supported for all ops used by TFLOP.
++            # Fall back to float32 for local smoke tests.
++            model.float()
+     else:
+         raise ValueError(f"Invalid torch dtype: {model_config.torch_dtype}")
+ 
+-    if torch.cuda.is_available():
++    if torch.cuda.is_available() and torch.cuda.device_count() > 0:
+         model = model.cuda()
+     model.eval()
+     print("Model set-up complete")
+@@ -277,16 +320,21 @@ if __name__ == "__main__":
+     import time
+ 
+     t1 = time.time()
++    runtime_dtype = model_config.torch_dtype
++    if not (torch.cuda.is_available() and torch.cuda.device_count() > 0):
++        runtime_dtype = "float32"
++
+     result_collection = evaluate_model(
+         model,
+         tokenizer,
+         dataloader,
+         exp_config,
+-        model_config.torch_dtype,
++        runtime_dtype,
+         args.current_bin,
+         args.num_bins,
+     )
+-    torch.cuda.synchronize()
++    if torch.cuda.is_available():
++        torch.cuda.synchronize()
+     t2 = time.time()
+     print(f"Evaluation complete. Time taken: {t2 - t1:.2f} seconds")
+ 
+diff --git a/tflop/datamodule/datasets/tflop.py b/tflop/datamodule/datasets/tflop.py
+index 2fc7a21..748293b 100644
+--- a/tflop/datamodule/datasets/tflop.py
++++ b/tflop/datamodule/datasets/tflop.py
+@@ -428,6 +428,49 @@ class TFLOPTestDataset(Dataset):
+ 
+         self.aux_json = json.load(open(self.aux_json_path, "r"))
+         self.aux_rec = pickle.load(open(self.aux_rec_pkl_path, "rb"))
++        if isinstance(self.aux_rec, list):
++            converted = {}
++            for entry in self.aux_rec:
++                if not isinstance(entry, dict):
++                    continue
++                filename = entry.get("file_name")
++                if not filename:
++                    continue
++                bbox = entry.get("bbox")
++                if bbox is None:
++                    continue
++                scores = entry.get("score", entry.get("bbox_score"))
++                if scores is None:
++                    scores = []
++
++                # detection_results_0.pkl stores an array of polygons per page.
++                # Convert each 8-point polygon to an axis-aligned bbox.
++                if hasattr(bbox, "__len__") and len(bbox) > 0 and hasattr(bbox[0], "__len__"):
++                    for idx, poly in enumerate(bbox):
++                        if poly is None or len(poly) != 8:
++                            continue
++                        xs = [float(poly[0]), float(poly[2]), float(poly[4]), float(poly[6])]
++                        ys = [float(poly[1]), float(poly[3]), float(poly[5]), float(poly[7])]
++                        converted.setdefault(filename, []).append(
++                            {
++                                "bbox": [min(xs), min(ys), max(xs), max(ys)],
++                                "text": entry.get("text", ""),
++                                "score": scores[idx] if idx < len(scores) else None,
++                            }
++                        )
++                else:
++                    if hasattr(bbox, "__len__") and len(bbox) == 8:
++                        xs = [float(bbox[0]), float(bbox[2]), float(bbox[4]), float(bbox[6])]
++                        ys = [float(bbox[1]), float(bbox[3]), float(bbox[5]), float(bbox[7])]
++                        bbox = [min(xs), min(ys), max(xs), max(ys)]
++                    converted.setdefault(filename, []).append(
++                        {
++                            "bbox": bbox,
++                            "text": entry.get("text", ""),
++                            "score": scores[0] if isinstance(scores, list) and scores else scores,
++                        }
++                    )
++            self.aux_rec = converted
+ 
+     def initialize_OTSL_config(self: "TFLOPTestDataset"):
+         """Initialize tokens which signify data cell in OTSL representations."""
+@@ -538,7 +581,7 @@ class TFLOPTestDataset(Dataset):
+ 
+         rec_result = self.aux_rec[selected_filename]
+         sample["bbox_coords"] = [list(c["bbox"]) for c in rec_result]
+-        sample["bbox_texts"] = [c["text"] for c in rec_result]
++        sample["bbox_texts"] = [c.get("text", "") for c in rec_result]
+         sample["file_name"] = selected_filename
+ 
+         return sample
+diff --git a/tflop/evaluator.py b/tflop/evaluator.py
+index 866052f..e01ce68 100755
+--- a/tflop/evaluator.py
++++ b/tflop/evaluator.py
+@@ -4,6 +4,7 @@ https://github.com/ibm-aur-nlp/PubTabNet/blob/master/src/metric.py
+ """
+ 
+ from collections import deque
++import multiprocessing as mp
+ 
+ from apted import APTED, Config
+ from apted.helpers import Tree
+@@ -229,3 +230,31 @@ class TEDS:
+             return 1.0 - (float(distance) / n_nodes)
+         else:
+             return 0.0
++
++    def batch_evaluate(self, pred_json, true_json):
++        """
++        Computes TEDS scores for a batch of samples, matching the PubTabNet API.
++
++        Args:
++            pred_json: Mapping from filename to predicted HTML.
++            true_json: Mapping from filename to {"html": ground-truth HTML}.
++
++        Returns:
++            Mapping from filename to TEDS score.
++        """
++        samples = true_json.keys()
++        if self.n_jobs == 1:
++            scores = [
++                self.evaluate(pred_json.get(filename, ""), true_json[filename]["html"])
++                for filename in samples
++            ]
++        else:
++            with mp.Pool(processes=self.n_jobs) as pool:
++                scores = pool.starmap(
++                    self.evaluate,
++                    [
++                        (pred_json.get(filename, ""), true_json[filename]["html"])
++                        for filename in samples
++                    ],
++                )
++        return dict(zip(samples, scores))
+diff --git a/tflop/model/decoder/mbart_decoder.py b/tflop/model/decoder/mbart_decoder.py
+index a54ae58..ff26a31 100644
+--- a/tflop/model/decoder/mbart_decoder.py
++++ b/tflop/model/decoder/mbart_decoder.py
+@@ -6,10 +6,36 @@ import torch.nn.functional as F
+ from torchvision.ops import RoIAlign
+ from transformers import MBartConfig, MBartForCausalLM, PreTrainedTokenizer
+ from transformers.file_utils import ModelOutput
+-from transformers.models.mbart.modeling_mbart import _expand_mask, _make_causal_mask
++
++try:
++    from transformers.models.mbart.modeling_mbart import _expand_mask, _make_causal_mask
++except ImportError:
++    # Newer transformers versions moved these helpers out of modeling_mbart.
++    from transformers.modeling_attn_mask_utils import (
++        _create_4d_causal_attention_mask,
++        _prepare_4d_attention_mask,
++    )
++
++    def _make_causal_mask(input_shape, dtype, device=None, past_key_values_length=0):
++        return _create_4d_causal_attention_mask(
++            input_shape=input_shape,
++            dtype=dtype,
++            device=device,
++            past_key_values_length=past_key_values_length,
++        )
++
++    def _expand_mask(attention_mask, dtype, tgt_len=None):
++        return _prepare_4d_attention_mask(
++            mask=attention_mask,
++            dtype=dtype,
++            tgt_len=tgt_len,
++        )
+ 
+ from tflop.loss import TableCL
+-from tflop.model.decoder.utils import apply_fast_mbart_decoder
++from tflop.model.decoder.utils import (
++    apply_fast_mbart_decoder,
++    apply_legacy_mbart_attention,
++)
+ 
+ 
+ class MBARTDecoder(nn.Module):
+@@ -65,6 +91,12 @@ class MBARTDecoder(nn.Module):
+         )
+ 
+         self.model = MBartForCausalLM(config=self.config)
++        # Force the legacy eager attention path because TFLOP's custom decoder
++        # masking logic is not compatible with the modern SDPA route in recent
++        # transformers versions.
++        self.model.config._attn_implementation = "eager"
++        self.model.model.config._attn_implementation = "eager"
++        apply_legacy_mbart_attention(self.model)
+         if self.use_fast:
+             apply_fast_mbart_decoder(self.model)
+         self.model.forward = (
+@@ -203,24 +235,25 @@ class MBARTDecoder(nn.Module):
+         attention_mask: torch.Tensor = None,
+         input_coords: torch.Tensor = None,
+         input_coords_length: torch.Tensor = None,
++        **kwargs,
+     ):
+         """Custom function for preparing inputs for inference
+ 
+         NOTE:
+             - This function overrides the default `prepare_inputs_for_generation` function
+         """
+-
+-        if past is not None:
+-            past_key_values = past
++        # TFLOP's decoder builds a custom prefix of bbox tokens into the input
++        # embedding stream. Recent transformers cache objects no longer match
++        # that legacy layout cleanly, so we intentionally force full-sequence
++        # decoding at every generation step for stability.
++        past_key_values = None
+         attention_mask = input_ids.ne(self.tokenizer.pad_token_id).long()
+-        if past_key_values is not None:
+-            input_ids = input_ids[:, -1:]
+ 
+         output = {
+             "input_ids": input_ids,
+             "attention_mask": attention_mask,
+             "past_key_values": past_key_values,
+-            "use_cache": use_cache,
++            "use_cache": False,
+             "encoder_hidden_states": encoder_outputs.last_hidden_state,
+             "inference_mode": True,
+             "input_coords": input_coords,
+@@ -276,7 +309,7 @@ class MBARTDecoder(nn.Module):
+         # encoder_hidden_states (bsz, embed_h * embed_w, d_model) -> (bsz, d_model, embed_h, embed_w)
+         embed_dim_h = int(self.input_size[1] / self.img_downsize_scale)
+         embed_dim_w = int(self.input_size[0] / self.img_downsize_scale)
+-        feature_map = encoder_hidden_states.transpose(1, 2).view(
++        feature_map = encoder_hidden_states.transpose(1, 2).reshape(
+             bsz, encoder_hidden_states.shape[-1], embed_dim_h, embed_dim_w
+         )  # (bsz, d_model, embed_h, embed_w)
+ 
+@@ -340,6 +373,7 @@ class MBARTDecoder(nn.Module):
+ 
+         if inference_mode:
+             assert labels is None
++        embed_scale = getattr(self.model.model.decoder, "embed_scale", 1.0)
+         (
+             loss,
+             tag2coord_pointer_acc,
+@@ -358,7 +392,7 @@ class MBARTDecoder(nn.Module):
+         if inference_mode and past_key_values is not None:
+             input_embeds = (
+                 self.model.model.decoder.embed_tokens(input_ids)
+-                * self.model.model.decoder.embed_scale
++                * embed_scale
+             )  # (batch_size, text_token_length, d_model)
+         else:
+             if self.use_imgRoiAlign:
+@@ -414,7 +448,7 @@ class MBARTDecoder(nn.Module):
+             # Text Embedding
+             batch_text_embedding = (
+                 self.model.model.decoder.embed_tokens(input_ids)
+-                * self.model.model.decoder.embed_scale
++                * embed_scale
+             )  # (batch_size, text_token_length, d_model)
+ 
+             # Combine all embeddings for input
+diff --git a/tflop/model/decoder/utils.py b/tflop/model/decoder/utils.py
+index 4c6445a..aa66871 100644
+--- a/tflop/model/decoder/utils.py
++++ b/tflop/model/decoder/utils.py
+@@ -25,13 +25,32 @@ from transformers.models.mbart.modeling_mbart import (
+     MBartAttention,
+     MBartDecoder,
+     MBartForCausalLM,
+-    _expand_mask,
+     logger,
+ )
+-import xformers.ops as xops
++
++try:
++    from transformers.models.mbart.modeling_mbart import _expand_mask
++except ImportError:
++    from transformers.modeling_attn_mask_utils import _prepare_4d_attention_mask
++
++    def _expand_mask(attention_mask, dtype, tgt_len=None):
++        return _prepare_4d_attention_mask(
++            mask=attention_mask,
++            dtype=dtype,
++            tgt_len=tgt_len,
++        )
++
++try:
++    import xformers.ops as xops
++except ImportError:
++    xops = None
+ 
+ 
+ def apply_fast_mbart_decoder(model: MBartForCausalLM) -> None:
++    if xops is None:
++        raise ImportError(
++            "xformers is required for TFLOP's fast MBART decoder path."
++        )
+     for module in model.model.modules():
+         if isinstance(module, MBartDecoder):
+             module.forward = partial(mbart_decoder_fast_forward, module)
+@@ -39,6 +58,78 @@ def apply_fast_mbart_decoder(model: MBartForCausalLM) -> None:
+             module.forward = partial(mbart_attention_fast_forward, module)
+ 
+ 
++def apply_legacy_mbart_attention(model: MBartForCausalLM) -> None:
++    """Patch MBART attention with a cache-free legacy implementation.
++
++    TFLOP injects a custom bbox-token prefix into the decoder input stream.
++    Recent transformers releases changed MBART attention internals and cache
++    handling enough that the original TFLOP decoder no longer runs reliably.
++    For inference on small benchmark sets, a cache-free legacy attention path
++    is a practical compatibility layer.
++    """
++    for module in model.model.modules():
++        if isinstance(module, MBartAttention):
++            module.forward = partial(mbart_attention_legacy_forward, module)
++
++
++def mbart_attention_legacy_forward(
++    mbart_attention_module: MBartAttention,
++    hidden_states: torch.Tensor,
++    key_value_states: Optional[torch.Tensor] = None,
++    past_key_values: Optional[Any] = None,
++    attention_mask: Optional[torch.Tensor] = None,
++    layer_head_mask: Optional[torch.Tensor] = None,
++    output_attentions: bool = False,
++    cache_position: Optional[torch.Tensor] = None,
++    **kwargs,
++) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
++    """Legacy attention forward compatible with TFLOP's decoder prefixing."""
++    del past_key_values, cache_position, kwargs
++
++    is_cross_attention = key_value_states is not None
++    bsz, tgt_len, _ = hidden_states.size()
++    current_states = key_value_states if is_cross_attention else hidden_states
++    src_len = current_states.shape[1]
++
++    query_states = mbart_attention_module.q_proj(hidden_states).view(
++        bsz, tgt_len, mbart_attention_module.num_heads, mbart_attention_module.head_dim
++    ).transpose(1, 2)
++    key_states = mbart_attention_module.k_proj(current_states).view(
++        bsz, src_len, mbart_attention_module.num_heads, mbart_attention_module.head_dim
++    ).transpose(1, 2)
++    value_states = mbart_attention_module.v_proj(current_states).view(
++        bsz, src_len, mbart_attention_module.num_heads, mbart_attention_module.head_dim
++    ).transpose(1, 2)
++
++    attn_weights = torch.matmul(
++        query_states,
++        key_states.transpose(2, 3),
++    ) * mbart_attention_module.scaling
++    if attention_mask is not None:
++        attn_weights = attn_weights + attention_mask
++
++    attn_weights = nn.functional.softmax(attn_weights, dim=-1)
++    if layer_head_mask is not None:
++        attn_weights = attn_weights * layer_head_mask.view(1, -1, 1, 1)
++
++    attn_weights = nn.functional.dropout(
++        attn_weights,
++        p=mbart_attention_module.dropout if mbart_attention_module.training else 0.0,
++        training=mbart_attention_module.training,
++    )
++    attn_output = torch.matmul(attn_weights, value_states)
++    attn_output = attn_output.transpose(1, 2).contiguous().view(
++        bsz,
++        tgt_len,
++        mbart_attention_module.embed_dim,
++    )
++    attn_output = mbart_attention_module.out_proj(attn_output)
++
++    # Return a tuple placeholder for past_key_value so downstream concatenation
++    # logic does not fail even when caching is disabled.
++    return attn_output, attn_weights if output_attentions else None, (None, None)
++
++
+ def mbart_attention_fast_forward(
+     mbart_attention_module: MBartAttention,
+     hidden_states: torch.Tensor,
+diff --git a/tflop/model/model/TFLOP.py b/tflop/model/model/TFLOP.py
+index f888291..762fff2 100644
+--- a/tflop/model/model/TFLOP.py
++++ b/tflop/model/model/TFLOP.py
+@@ -72,6 +72,11 @@ class TFLOP(PreTrainedModel):
+         encoder_outputs = self.encoder(
+             image_tensors
+         )  # image_tensors: (bsz, 3, 768, 768), encoder_outptus: (bsz, 24*24, 1024)
++        # Newer timm / Swin builds can return a 4D feature map instead of the
++        # flattened token sequence TFLOP expects downstream.
++        if encoder_outputs.dim() == 4:
++            batch_size, feat_h, feat_w, feat_dim = encoder_outputs.shape
++            encoder_outputs = encoder_outputs.reshape(batch_size, feat_h * feat_w, feat_dim)
+ 
+         # text decoding
+         decoder_outputs = self.decoder(
+@@ -139,6 +144,11 @@ class TFLOP(PreTrainedModel):
+ 
+         # vision encoding
+         last_hidden_state = self.encoder(image_tensors)
++        if last_hidden_state.dim() == 4:
++            batch_size, feat_h, feat_w, feat_dim = last_hidden_state.shape
++            last_hidden_state = last_hidden_state.reshape(
++                batch_size, feat_h * feat_w, feat_dim
++            )
+         if self.device.type != "cuda":
+             last_hidden_state = last_hidden_state.to(torch.float32)
+         encoder_outputs = ModelOutput(
+@@ -162,7 +172,11 @@ class TFLOP(PreTrainedModel):
+                 early_stopping=True,
+                 pad_token_id=self.tokenizer.pad_token_id,
+                 eos_token_id=self.tokenizer.eos_token_id,
+-                use_cache=True,
++                # Disable KV caching for compatibility with recent transformers
++                # generation internals. TFLOP's decoder builds a custom prefix of
++                # bbox tokens, and the legacy cache layout it expects no longer
++                # matches the modern cache objects.
++                use_cache=False,
+                 num_beams=1,
+                 bad_words_ids=[[self.tokenizer.unk_token_id]],
+                 return_dict_in_generate=True,
+@@ -172,13 +186,23 @@ class TFLOP(PreTrainedModel):
+                 input_coords=pointer_args["coord_input_idx"],
+                 input_coords_length=pointer_args["coord_input_length"],
+             )
+-            last_hidden_state_collection = [
+-                tok_pos_output[-1]
+-                for tok_pos_output in decoder_output.decoder_hidden_states
+-            ]
+-            last_hidden_state_collection = torch.cat(
+-                last_hidden_state_collection, dim=1
+-            )  # (bsz, seq_len-1, d_model)
++            # Recent transformers versions no longer expose TFLOP-compatible
++            # per-step decoder hidden states from `generate()`. Replay the final
++            # generated sequence through the TFLOP decoder to recover the hidden
++            # states needed for pointer prediction.
++            decoder_replay = self.decoder(
++                input_ids=decoder_output.sequences,
++                input_coords=pointer_args["coord_input_idx"],
++                input_coords_length=pointer_args["coord_input_length"],
++                attention_mask=decoder_output.sequences.ne(self.tokenizer.pad_token_id).long(),
++                encoder_hidden_states=encoder_outputs.last_hidden_state,
++                use_cache=False,
++                output_attentions=return_attentions,
++                output_hidden_states=True,
++                return_dict=True,
++                inference_mode=True,
++            )
++            last_hidden_state_collection = decoder_replay.hidden_states[-1]
+ 
+             text_to_dr_point_pred = self.get_dr_point_pred(
+                 last_hidden_state_collection, decoder_output.sequences
+@@ -243,6 +267,10 @@ class TFLOP(PreTrainedModel):
+             :, :, 1:
+         ]  # (bsz, text_token_cnt-2, bbox_token_cnt-1)
+         text_token_seq = decoder_output_sequences[:, 2:]  # (bsz, text_token_cnt-2)
++        if coord_logits.shape[1] != text_token_seq.shape[1]:
++            valid_text_len = min(coord_logits.shape[1], text_token_seq.shape[1])
++            coord_logits = coord_logits[:, :valid_text_len, :]
++            text_token_seq = text_token_seq[:, :valid_text_len]
+         is_data_tensor = torch.zeros(
+             (text_token_seq.shape[0], text_token_seq.shape[1]),
+             dtype=torch.bool,
+diff --git a/tflop/model/model/TFLOP_Config.py b/tflop/model/model/TFLOP_Config.py
+index 7f04d7e..1d9faee 100644
+--- a/tflop/model/model/TFLOP_Config.py
++++ b/tflop/model/model/TFLOP_Config.py
+@@ -43,7 +43,10 @@ class TFLOPConfig(PretrainedConfig):
+             self.input_size = input_size
+         self.align_along_axis = align_along_axis
+         self.window_size = window_size
+-        self.encoder_layer = encoder_layer
++        if type(encoder_layer) in [list, tuple, omegaconf.listconfig.ListConfig]:
++            self.encoder_layer = tuple(int(x) for x in encoder_layer)
++        else:
++            self.encoder_layer = encoder_layer
+         self.decoder_layer = decoder_layer
+         self.max_position_embeddings = (
+             max_length if max_position_embeddings is None else max_position_embeddings
+-- 
+2.43.0
+

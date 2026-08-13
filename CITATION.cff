@@ -1,0 +1,10 @@
+cff-version: 1.2.0
+message: "If you use this research artifact, please cite it and the relevant upstream models and datasets."
+title: "Reproduction and Domain Adaptation of Table Recognition Pipelines for Scientific Documents"
+type: software
+authors:
+  - family-names: Trinh
+    given-names: Win-Hon
+version: 0.1.0
+date-released: 2026-08-13
+repository-code: "https://github.com/winni00/table-structure-recognition-vt2"
