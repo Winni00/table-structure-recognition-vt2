@@ -106,6 +106,60 @@ python3 tools/build_data_manifest.py /path/to/dataset \
    PubTabNet reproduction before running FinTabNet or restricted target-domain
    experiments.
 
+## PSENet + MASTER OCR runner
+
+[`scripts/run_tablemaster_end2end_subset.py`](scripts/run_tablemaster_end2end_subset.py)
+is the executable OCR stage used to produce TFLOP's detected-text input. It
+uses exactly these two TableMASTER-mmocr model variants:
+
+| Stage | Configuration | Checkpoint used | Source |
+|---|---|---|---|
+| Text-region detection | `configs/textdet/psenet/psenet_r50_fpnf_600e_pubtabnet.py` (PSENet, ResNet-50 + FPNF, 600 epochs, PubTabNet) | `pse_epoch_600.pth` | [TableMASTER-mmocr PSENet release](https://drive.google.com/file/d/13vni9GH6cxr5jTiOdiRu--Q6AZojB2p2/view?usp=sharing) |
+| Text-line recognition | `configs/textrecog/master/master_lmdb_ResnetExtra_tableRec_dataset_dynamic_mmfp16.py` (MASTER, ResNetExtra, maximum sequence length 100) | `master_epoch_6.pth` | [TableMASTER-mmocr MASTER release](https://drive.google.com/file/d/1bqTRaUlV2UViIZ5qlJR5VlTMLMf03oGA/view?usp=sharing) |
+
+The model links and filenames above are the ones published in the
+[TableMASTER-mmocr pretrained-model section](https://github.com/JiaquanYe/TableMASTER-mmocr/tree/689f49cd4f632272244e758551d5e3c92211b7c2#pretrained-model).
+The locally used checkpoint files had these SHA-256 hashes:
+
+```text
+8a0b0843d596e4541a84c472a0845a6ab9439c1d9c4f4900de99b2520a0dcab7  pse_epoch_600.pth
+43c662844e0f081ead725e43ec58fab41d070300ca0e8ba07a853156753d86c3  master_epoch_6.pth
+```
+
+Clone the exact source revision used by the experiments and apply the recorded
+NumPy compatibility change:
+
+```bash
+git clone https://github.com/JiaquanYe/TableMASTER-mmocr.git external/TableMASTER-mmocr
+git -C external/TableMASTER-mmocr checkout 689f49cd4f632272244e758551d5e3c92211b7c2
+git -C external/TableMASTER-mmocr apply \
+  ../../patches/tablemaster-numpy-int-compat.patch
+```
+
+Download the two public checkpoints from the links in the table and place them
+as `models/tablemaster_mmocr/pse_epoch_600.pth` and
+`models/tablemaster_mmocr/master_epoch_6.pth`. Model weights remain ignored by
+Git and must not be committed.
+
+The runner expects a UTF-8 subset file with one image filename per line and an
+image directory containing those files. For example:
+
+```bash
+python3 scripts/run_tablemaster_end2end_subset.py \
+  --subset /path/to/subset.txt \
+  --images-dir /path/to/table-images \
+  --output-pkl /path/to/output/aux_rec.pkl \
+  --on-error fail
+```
+
+The pickle maps every input filename to a list of recognised regions. Each
+region contains `bbox`, `bbox_score`, `text`, and recognition `score`. A sibling
+`aux_rec.summary.json` records sample counts, errors, and the resolved model
+configuration/checkpoint paths. Use `--on-error empty` for long shard jobs that
+should retain an empty list and error record instead of stopping at the first
+image-level failure. Run `python3 scripts/run_tablemaster_end2end_subset.py
+--help` for all path overrides.
+
 ## Reproduction scope
 
 The public benchmark experiments can be reconstructed from public source data,

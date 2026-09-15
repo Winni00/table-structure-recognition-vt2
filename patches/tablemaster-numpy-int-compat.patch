@@ -1,0 +1,22 @@
+diff --git a/table_recognition/utils.py b/table_recognition/utils.py
+index ac38887..2e1c909 100644
+--- a/table_recognition/utils.py
++++ b/table_recognition/utils.py
+@@ -86,7 +86,7 @@ def rotate(img, pt1, pt2, pt3, pt4):
+ def rotate_crop_img(image, bboxes):
+     bbox_imgs = []
+     for i in range(bboxes.shape[0]):
+-        box = bboxes[i].reshape(4, 2).astype(np.int)
++        box = bboxes[i].reshape(4, 2).astype(int)
+         rect = cv2.minAreaRect(box)
+         box = cv2.boxPoints(rect)
+         box, angle = sort_rectangle(box)
+@@ -192,7 +192,7 @@ def delete_invalid_bbox(img, bboxes):
+         if (sum(bbox<0.)>0) or (sum(bbox[0::2]>width)>0) or (sum(bbox[1::2]>height)>0):
+             continue
+-        if Polygon(bbox.reshape(4,2).astype(np.int)).area == 0.:
++        if Polygon(bbox.reshape(4,2).astype(int)).area == 0.:
+             continue
+         new_bboxes.append(bbox)
+     new_bboxes = np.array(new_bboxes)
+     return new_bboxes

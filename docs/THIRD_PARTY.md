@@ -7,6 +7,7 @@ checkouts:
 | Project | Repository | Commit used |
 |---|---|---|
 | TFLOP (public base) | <https://github.com/UpstageAI/TFLOP> | `d59ddf58a10fbaa22a7088b8f688bc6e694ae703` |
+| TableMASTER-mmocr | <https://github.com/JiaquanYe/TableMASTER-mmocr> | `689f49cd4f632272244e758551d5e3c92211b7c2` plus `patches/tablemaster-numpy-int-compat.patch` |
 | Docling IBM Models | <https://github.com/docling-project/docling-ibm-models> | `9c5bcb4989aa8a5b657b315f9b371583276fbaec` |
 | Docling | <https://github.com/docling-project/docling> | `53412ed43c9f5c77eb0c00a52b01560e9f9795fb` |
 
@@ -25,6 +26,11 @@ git clone https://github.com/UpstageAI/TFLOP external/TFLOP
 git -C external/TFLOP checkout d59ddf58a10fbaa22a7088b8f688bc6e694ae703
 git -C external/TFLOP am \
   ../../patches/tflop-evaluation-and-inference-diagnostics.patch
+
+git clone https://github.com/JiaquanYe/TableMASTER-mmocr external/TableMASTER-mmocr
+git -C external/TableMASTER-mmocr checkout 689f49cd4f632272244e758551d5e3c92211b7c2
+git -C external/TableMASTER-mmocr apply \
+  ../../patches/tablemaster-numpy-int-compat.patch
 
 git clone https://github.com/docling-project/docling-ibm-models external/docling-ibm-models
 git -C external/docling-ibm-models checkout 9c5bcb4989aa8a5b657b315f9b371583276fbaec
